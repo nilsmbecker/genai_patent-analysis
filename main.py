@@ -7,9 +7,9 @@ belongs in app/services/ and app/routes/.
 
 Startup sequence (lifespan):
   1. Validate required env vars (fails fast with a clear message if missing)
-  2. Load jinaai/jina-embeddings-v3 embedding model into app.state.state.embed_model
-  3. Create Supabase client → app.state.state.supabase
-  4. Log the active OpenRouter model
+  2. Create Supabase client → app.state.state.supabase
+  3. Log the active OpenRouter model
+  (Embedding model is lazy-loaded on first use — see app/state.py)
 
 Routers registered:
   app/routes/ui.py  — HTML page routes (/, /upload, /patent-library, /compare, /playground)
@@ -51,10 +51,9 @@ _configure_tesseract()
 
 import uvicorn
 from fastapi import FastAPI
-from sentence_transformers import SentenceTransformer
 from supabase import create_client
 
-from app.config import EMBEDDING_MODEL, settings
+from app.config import settings
 from app.state import state
 
 logging.basicConfig(
@@ -72,12 +71,8 @@ async def lifespan(app: FastAPI):
     if not settings.openrouter_api_key:
         raise RuntimeError("OPENROUTER_API_KEY must be set in .env or .env.txt")
 
-    log.info("Startup: loading embedding model %s…", EMBEDDING_MODEL)
-    # trust_remote_code=True is required by jinaai/jina-embeddings-v3 which ships
-    # custom model code not yet merged into the sentence-transformers core.
-    state.embed_model = SentenceTransformer(EMBEDDING_MODEL, trust_remote_code=True)
-    log.info("Embedding model loaded.")
-
+    # Embedding model is lazy-loaded on first use (see app/state.py) to keep
+    # startup fast on memory-constrained hosts and pass Railway health checks.
     state.supabase = create_client(settings.supabase_url, settings.supabase_anon_key)
     log.info("Supabase client initialised.")
 

@@ -63,7 +63,7 @@ META_EXTRACT_PAGES = 3
 # not code points) are treated as drawing pages and rendered as PNG. Using byte length
 # makes the threshold script-agnostic: a Chinese character is 3 bytes, so 67 CJK
 # characters already exceed 200 bytes and will not be mistaken for figure pages.
-FIGURE_DPI = 100
+FIGURE_DPI = 60
 FIGURE_TEXT_THRESHOLD = 200
 
 # Glass domain hard limits (Fuyao manufacturing constraints)
