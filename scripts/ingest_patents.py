@@ -133,7 +133,7 @@ def main() -> None:
         sys.exit(1)
 
     log.info("Loading embedding model: %s", EMBEDDING_MODEL)
-    embed_model = SentenceTransformer(EMBEDDING_MODEL)
+    embed_model = SentenceTransformer(EMBEDDING_MODEL, trust_remote_code=True)
 
     supabase = create_client(settings.supabase_url, settings.supabase_anon_key)
     log.info("Supabase connected.")
