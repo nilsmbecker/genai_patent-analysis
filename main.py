@@ -1,3 +1,4 @@
+
 """
 main.py — FastAPI application factory and startup/shutdown lifecycle.
 

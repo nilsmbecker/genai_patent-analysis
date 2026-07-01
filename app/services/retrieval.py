@@ -34,7 +34,7 @@ from fastapi import HTTPException
 
 from app.config import TOP_K_CHUNKS, PVB_MIN_MM, PVB_MAX_MM, GLASS_TOTAL_MIN, GLASS_TOTAL_MAX
 from app.models import DesignAroundProposal, PatentRiskResult
-from app.services.llm import llm_json
+from app.services.llm import llm_json, wrap_untrusted, UNTRUSTED_INPUT_NOTICE
 from app.services.progress import noop_on_step
 from app.state import state
 
@@ -274,10 +274,11 @@ Rules:
 - Base your analysis on claim language, NOT on semantic similarity alone.
 - Fuyao manufacturing context: glass thickness {GLASS_TOTAL_MIN}-{GLASS_TOTAL_MAX}mm, PVB interlayer {PVB_MIN_MM}-{PVB_MAX_MM}mm.
 - You have limited output space. If running long, stop adding elements and close the JSON immediately.
+- {UNTRUSTED_INPUT_NOTICE}
 
-COMPONENT SCOPE: {component_scope}
+COMPONENT SCOPE: {wrap_untrusted("component_scope", component_scope)}
 PROPOSED DESIGN:
-{proposed_specs[:2000]}
+{wrap_untrusted("proposed_specifications", proposed_specs[:2000])}
 
 PATENT CLAIMS:
 {context_block}
@@ -475,8 +476,10 @@ Schema: {{"design_arounds":[{{"id":"DA1","description":"2-3 sentence engineering
 
 Original risk: {original_risk}
 Matched claim elements to avoid: {risk_block}
-Scope: {component_scope}
-Original spec: {proposed_specs[:400]}
+Scope: {wrap_untrusted("component_scope", component_scope)}
+Original spec: {wrap_untrusted("proposed_specifications", proposed_specs[:400])}
+
+{UNTRUSTED_INPUT_NOTICE}
 
 Propose 2 short alternative designs that structurally avoid the matched claim elements. Keep the
 same fundamental construction type as the original (same material approach and bonding/lamination
@@ -589,8 +592,10 @@ Your previous proposal still conflicts with a patent. Revise it so it avoids ALL
 following claim elements (from every patent encountered so far, not just the latest one):
 {avoid_block}
 
-Scope: {component_scope}
+Scope: {wrap_untrusted("component_scope", component_scope)}
 Previous proposal: {proposal.get('description', '')[:400]}
+
+{UNTRUSTED_INPUT_NOTICE}
 
 Propose one revised design that structurally avoids every listed element. Keep the same
 fundamental construction type as the original (same material approach and bonding/lamination
@@ -659,8 +664,10 @@ into something that merely looks numerically compliant — reject it instead.
 
 Schema: {{"audited_design_arounds":[{{"id":"...","description":"...","rationale":"...","passed_audit":true,"audit_notes":"..."}}]}}
 
-ORIGINAL SPEC (what the proposals must actually be compared against): {proposed_specs[:300]}
-SCOPE: {component_scope}
+{UNTRUSTED_INPUT_NOTICE}
+
+ORIGINAL SPEC (what the proposals must actually be compared against): {wrap_untrusted("proposed_specifications", proposed_specs[:300])}
+SCOPE: {wrap_untrusted("component_scope", component_scope)}
 DESIGNS: {da_block}
 
 Check each against constraints. If a description or rationale misstates the original spec above, correct it. Rewrite if violated (but not a fundamental construction change — reject those per above)."""

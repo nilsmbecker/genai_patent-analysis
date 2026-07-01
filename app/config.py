@@ -52,6 +52,16 @@ EMBED_DIMS      = 1024
 LLM_MAX_TOKENS = 2048
 TOP_K_CHUNKS = 3
 
+# Phase 4 — minimum cosine similarity (match_patent_hybrid's vector_rank column) for a
+# corpus chunk to count as a genuine match to a user-supplied domain. match_patent_hybrid's
+# vector side is a pure nearest-neighbour search with no floor of its own, so an unrelated
+# domain (e.g. "Cookies" against an automotive-glass corpus) still returns *some* chunks —
+# just not meaningfully similar ones. fetch_corpus_overview rejects the request instead of
+# running the LLM pipeline on them if nothing clears this floor (and no chunk has an actual
+# full-text hit either). Chosen conservatively for jina-embeddings-v3; re-tune against real
+# corpus data if genuine domains start getting rejected or nonsense ones start passing.
+INNOVATION_MIN_VECTOR_SIMILARITY = 0.35
+
 # PDF processing
 BATCH_SIZE = 32
 PAGE_DPI = 150

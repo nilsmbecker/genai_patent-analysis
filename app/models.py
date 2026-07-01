@@ -71,8 +71,8 @@ class PatentRiskResult(BaseModel):
 
 class RiskAnalysisRequest(BaseModel):
     product_id:              str = Field(...)
-    component_scope:         str = Field(...)
-    proposed_specifications: str = Field(...)
+    component_scope:         str = Field(..., max_length=2000)
+    proposed_specifications: str = Field(..., max_length=4000)
     jurisdiction:            str = Field(default="ALL")
 
 
@@ -87,8 +87,8 @@ class RiskAnalysisResponse(BaseModel):
 
 class DesignSuggestionRequest(BaseModel):
     product_id:              str = Field(...)
-    component_scope:         str = Field(...)
-    proposed_specifications: str = Field(...)
+    component_scope:         str = Field(..., max_length=2000)
+    proposed_specifications: str = Field(..., max_length=4000)
     jurisdiction:            str = Field(default="ALL")
 
 
@@ -147,10 +147,10 @@ class TrendPoint(BaseModel):
 
 
 class InnovationRequest(BaseModel):
-    domain:       str = Field(default="")
+    domain:       str = Field(default="", max_length=200)
     scope:        str = Field(default="full")   # full | claims | description
     jurisdiction: str = Field(default="ALL")
-    focus_prompt: str = Field(default="")
+    focus_prompt: str = Field(default="", max_length=500)
 
 
 class InnovationResponse(BaseModel):

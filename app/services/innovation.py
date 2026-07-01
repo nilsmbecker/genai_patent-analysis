@@ -35,8 +35,11 @@ from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import HTTPException
 
-from app.config import GLASS_TOTAL_MIN, GLASS_TOTAL_MAX, PVB_MIN_MM, PVB_MAX_MM
-from app.services.llm import llm_json
+from app.config import (
+    GLASS_TOTAL_MIN, GLASS_TOTAL_MAX, PVB_MIN_MM, PVB_MAX_MM,
+    INNOVATION_MIN_VECTOR_SIMILARITY,
+)
+from app.services.llm import llm_json, wrap_untrusted, UNTRUSTED_INPUT_NOTICE
 from app.services.progress import noop_on_step
 from app.state import state
 
@@ -69,6 +72,13 @@ def fetch_corpus_overview(
     If domain_embedding is provided, hybrid search ranks patents by semantic
     relevance to the domain first; otherwise falls back to most recent patents.
     Caps at MAX_CORPUS_PATENTS to keep the analyst prompt within token budget.
+
+    If a domain is given but nothing in the corpus is actually relevant to it
+    (no full-text hit and no chunk clears INNOVATION_MIN_VECTOR_SIMILARITY),
+    returns [] rather than silently falling back to an unrelated corpus —
+    match_patent_hybrid's vector search has no similarity floor of its own, so
+    it always returns *something* even for a domain with zero real matches
+    (e.g. "Cookies" against an automotive-glass corpus).
     """
     filter_jx     = None if (not jurisdiction or jurisdiction.upper() == "ALL") else jurisdiction
     section_types = SCOPE_SECTION_TYPES.get(scope, SCOPE_SECTION_TYPES["full"])
@@ -81,6 +91,19 @@ def fetch_corpus_overview(
             "match_count":         MAX_CORPUS_PATENTS * 3,
         }).execute()
         chunks = resp.data or []
+
+        has_relevant_match = any(
+            (c.get("fts_rank") or 0) > 0
+            or (c.get("vector_rank") or 0) >= INNOVATION_MIN_VECTOR_SIMILARITY
+            for c in chunks
+        )
+        if not has_relevant_match:
+            log.info(
+                "Step 1 — corpus overview: domain %r matched nothing in the corpus "
+                "(no FTS hits, best vector_rank below %.2f floor) — rejecting, no LLM calls made",
+                domain, INNOVATION_MIN_VECTOR_SIMILARITY,
+            )
+            return []
 
         # Deduplicate patent IDs in relevance order
         seen_ids: List[str] = []
@@ -185,6 +208,12 @@ def call_agent_analyst(
     The LLM receives a compact JSON block of patent summaries and returns structured
     clusters (recurring themes) and gaps (unprotected adjacent areas).
     patent_count per cluster is computed server-side from the returned patent_numbers list.
+
+    domain/focus_prompt are free-text end-user input, so they're delimited via
+    wrap_untrusted() and every patent_number/related_patent the LLM returns is
+    checked against the real corpus below — this catches prompt injection
+    (e.g. a focus_prompt telling the model to invent off-topic "patents")
+    regardless of how the injected text is phrased.
     """
     corpus_block = json.dumps([
         {
@@ -194,10 +223,11 @@ def call_agent_analyst(
         }
         for p in patent_overviews
     ])
+    known_numbers = {p["patent_number"] for p in patent_overviews if p.get("patent_number")}
 
     context_lines = "\n".join(filter(None, [
-        f"Domain: {domain}"      if domain.strip()       else "",
-        f"Focus: {focus_prompt}" if focus_prompt.strip() else "",
+        wrap_untrusted("domain", domain)             if domain.strip()       else "",
+        wrap_untrusted("focus_prompt", focus_prompt) if focus_prompt.strip() else "",
     ]))
 
     prompt = (
@@ -211,7 +241,9 @@ def call_agent_analyst(
         "- Identify 3-6 whitespace gaps: technical areas adjacent to the clusters NOT covered by any listed patent.\n"
         "- opportunity_level HIGH = clear commercial value + low existing IP density.\n"
         "- related_patents = patent numbers closest to the boundary of the gap.\n"
-        "- Base analysis on claim language and technical substance, NOT just titles.\n\n"
+        "- Base analysis on claim language and technical substance, NOT just titles.\n"
+        + (f"- {UNTRUSTED_INPUT_NOTICE}\n" if context_lines else "")
+        + "\n"
         + (context_lines + "\n\n" if context_lines else "")
         + f"PATENT CORPUS:\n{corpus_block}"
     )
@@ -220,8 +252,30 @@ def call_agent_analyst(
     result.setdefault("clusters", [])
     result.setdefault("gaps", [])
 
+    # Structural validation — drop any patent number the LLM referenced that
+    # isn't actually in the corpus we sent it (catches fabricated/off-topic
+    # content regardless of the injection phrasing used to produce it).
+    dropped_clusters = 0
+    kept_clusters = []
     for cluster in result["clusters"]:
-        cluster["patent_count"] = len(cluster.get("patent_numbers", []))
+        real_numbers = [n for n in cluster.get("patent_numbers", []) if n in known_numbers]
+        if not real_numbers:
+            dropped_clusters += 1
+            continue
+        cluster["patent_numbers"] = real_numbers
+        cluster["patent_count"]   = len(real_numbers)
+        kept_clusters.append(cluster)
+    result["clusters"] = kept_clusters
+
+    for gap in result["gaps"]:
+        gap["related_patents"] = [n for n in gap.get("related_patents", []) if n in known_numbers]
+
+    if dropped_clusters:
+        log.warning(
+            "Step 3 — analyst: dropped %d cluster(s) with no real corpus patents "
+            "(possible prompt injection via domain/focus_prompt)",
+            dropped_clusters,
+        )
 
     log.info(
         "Step 3 — analyst: %d clusters, %d gaps",
@@ -245,6 +299,10 @@ def call_agent_innovator(
 
     Each vector is scored for feasibility (achievability within Fuyao manufacturing)
     and novelty (distance from existing prior art).
+
+    domain/focus_prompt are delimited via wrap_untrusted() (same rationale as
+    call_agent_analyst); addresses_clusters is checked against the real cluster
+    names produced in Step 3 so a fabricated cluster reference can't slip through.
     """
     clusters_block = json.dumps([
         {"name": c["name"], "summary": c["summary"]} for c in clusters
@@ -253,10 +311,11 @@ def call_agent_innovator(
         {"area": g["area"], "description": g["description"], "opportunity_level": g["opportunity_level"]}
         for g in gaps
     ])
+    known_cluster_names = {c["name"] for c in clusters if c.get("name")}
 
     context_lines = "\n".join(filter(None, [
-        f"Domain: {domain}"      if domain.strip()       else "",
-        f"Focus: {focus_prompt}" if focus_prompt.strip() else "",
+        wrap_untrusted("domain", domain)             if domain.strip()       else "",
+        wrap_untrusted("focus_prompt", focus_prompt) if focus_prompt.strip() else "",
     ]))
 
     prompt = (
@@ -271,13 +330,22 @@ def call_agent_innovator(
         "- novelty HIGH = no clear prior art; MEDIUM = adjacent prior art exists; LOW = incremental.\n"
         f"- Fuyao constraints: glass stack {GLASS_TOTAL_MIN}-{GLASS_TOTAL_MAX}mm, "
         f"PVB {PVB_MIN_MM}-{PVB_MAX_MM}mm, no conductive layers in HUD zone, wedge ≤0.1 mrad.\n"
-        "- addresses_clusters: list cluster names from the provided clusters exactly.\n\n"
+        "- addresses_clusters: list cluster names from the provided clusters exactly.\n"
+        + (f"- {UNTRUSTED_INPUT_NOTICE}\n" if context_lines else "")
+        + "\n"
         + (context_lines + "\n\n" if context_lines else "")
         + f"TECHNOLOGY CLUSTERS:\n{clusters_block}\n\nIDENTIFIED GAPS:\n{gaps_block}"
     )
 
-    result     = llm_json(prompt, max_tokens=4096)
+    result      = llm_json(prompt, max_tokens=4096)
     innovations = result.get("innovations", [])
+
+    # Structural validation — strip cluster references the LLM invented that
+    # don't match a real cluster from Step 3.
+    for inv in innovations:
+        inv["addresses_clusters"] = [
+            c for c in inv.get("addresses_clusters", []) if c in known_cluster_names
+        ]
 
     log.info("Step 4 — innovator: %d innovation vectors generated", len(innovations))
     return innovations
