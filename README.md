@@ -1,3 +1,4 @@
+# README.md — Patent Analysis Platform
 # GenAI Patent Analysis Platform
 
 AI-powered patent analysis tool. Upload patent PDFs, get summaries of patents, analyse IP (Intellectual Property) risk against your design ideas, get design-around suggestions, and discover innovation gaps across the patent corpus.
