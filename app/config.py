@@ -29,6 +29,10 @@ _ROOT = Path(__file__).parent.parent
 load_dotenv(_ROOT / ".env")
 load_dotenv(_ROOT / ".env.txt", override=False)
 
+BASE_DIR = _ROOT
+UPLOAD_DIR = _ROOT / "uploads"
+UPLOAD_DIR.mkdir(exist_ok=True)
+
 
 class Settings(BaseSettings):
     supabase_url: str = ""
@@ -50,17 +54,6 @@ settings = Settings()
 EMBEDDING_MODEL = "jinaai/jina-embeddings-v3"
 EMBED_DIMS      = 1024
 LLM_MAX_TOKENS = 2048
-TOP_K_CHUNKS = 3
-
-# Phase 4 — minimum cosine similarity (match_patent_hybrid's vector_rank column) for a
-# corpus chunk to count as a genuine match to a user-supplied domain. match_patent_hybrid's
-# vector side is a pure nearest-neighbour search with no floor of its own, so an unrelated
-# domain (e.g. "Cookies" against an automotive-glass corpus) still returns *some* chunks —
-# just not meaningfully similar ones. fetch_corpus_overview rejects the request instead of
-# running the LLM pipeline on them if nothing clears this floor (and no chunk has an actual
-# full-text hit either). Chosen conservatively for jina-embeddings-v3; re-tune against real
-# corpus data if genuine domains start getting rejected or nonsense ones start passing.
-INNOVATION_MIN_VECTOR_SIMILARITY = 0.35
 
 # PDF processing
 BATCH_SIZE = 32
@@ -76,13 +69,20 @@ META_EXTRACT_PAGES = 3
 FIGURE_DPI = 60
 FIGURE_TEXT_THRESHOLD = 200
 
-# Glass domain hard limits (Fuyao manufacturing constraints)
+# Glass domain hard limits (Manufacturing constraints)
 PVB_MIN_MM = 0.38
 PVB_MAX_MM = 0.76
 GLASS_TOTAL_MIN = 3.1
 GLASS_TOTAL_MAX = 6.0
 HUD_ZONE_CONDUCTIVE_BAN = True
 
-BASE_DIR = _ROOT
-UPLOAD_DIR = _ROOT / "uploads"
-UPLOAD_DIR.mkdir(exist_ok=True)
+
+# Phase 4 — minimum cosine similarity (match_patent_hybrid's vector_rank column) for a
+# corpus chunk to count as a genuine match to a user-supplied domain. match_patent_hybrid's
+# vector side is a pure nearest-neighbour search with no floor of its own, so an unrelated
+# domain (e.g. "Cookies" against an automotive-glass corpus) still returns *some* chunks —
+# just not meaningfully similar ones. fetch_corpus_overview rejects the request instead of
+# running the LLM pipeline on them if nothing clears this floor (and no chunk has an actual
+# full-text hit either). Chosen conservatively for jina-embeddings-v3; re-tune against real
+# corpus data if genuine domains start getting rejected or nonsense ones start passing.
+INNOVATION_MIN_VECTOR_SIMILARITY = 0.35

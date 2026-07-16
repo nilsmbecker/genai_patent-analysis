@@ -27,7 +27,9 @@ from typing import Any, Dict, List, Optional
 
 import fitz
 
-from app.services.retrieval import _score_to_label
+from app.services.risk import _score_to_label
+
+
 from app.state import state
 
 log = logging.getLogger(__name__)

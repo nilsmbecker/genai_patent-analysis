@@ -16,7 +16,6 @@ Endpoints:
   GET    /api/v1/patents/{patent_id}/sheet/pdf    → per-patent Analysis Sheet PDF
   GET    /api/v1/patents/{patent_id}/images       → list figure metadata
   GET    /api/v1/images/{image_id}               → stream a single figure as PNG
-  POST   /api/v1/compare                         → compare two patents
   POST   /api/v1/risk-analysis                   → Phase 2: IP risk assessment only (SSE stream)
   POST   /api/v1/design-suggestions              → Phase 3: design proposals built on risk output (SSE stream)
   POST   /api/v1/innovation                      → Phase 4: corpus-wide gap + innovation analysis (SSE stream)
@@ -49,21 +48,19 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from app.config import settings
 from app.models import (
-    ChunkReference,
-    CompareRequest,
+    PatentRiskResult,
+    RiskAnalysisRequest,
+    RiskAnalysisResponse,
     DesignSuggestionRequest,
     DesignSuggestionResponse,
     InnovationRequest,
     InnovationResponse,
-    InnovationSaveRequest,
-    ManagementSummaryRequest,
     SavedInnovationSummary,
     SavedInnovationDetail,
     SavedManagementSummary,
-    PatentRiskResult,
-    RiskAnalysisRequest,
-    RiskAnalysisResponse,
-    PatentUpdateRequest,
+    InnovationSaveRequest,
+    ManagementSummaryRequest,
+    PatentUpdateRequest
 )
 from app.services.ingest import ingest_pdf
 from app.services.llm import llm_json
@@ -83,12 +80,16 @@ from app.services.management_summary import (
 )
 from app.services.patent_sheet import build_patent_sheet_pdf
 from app.services.progress import stream_sse
-from app.services.retrieval import (
-    call_agent_auditor,
-    call_agent_designer,
+
+from app.services.risk import (
     run_patent_risk_pipeline,
     _score_to_label,
 )
+from app.services.design import (
+    call_agent_auditor,
+    call_agent_designer,
+)
+
 from app.state import state
 from app.utils.metadata import extract_metadata
 from app.utils.translation import detect_language, translate_to_english
@@ -430,110 +431,6 @@ async def serve_patent_image(image_id: str):
         raise HTTPException(status_code=500, detail="Unexpected image_data format from database")
 
     return Response(content=image_bytes, media_type="image/png")
-
-
-# ---------------------------------------------------------------------------
-# Compare
-# ---------------------------------------------------------------------------
-
-@router.post("/api/v1/compare")
-async def compare_patents(req: CompareRequest):
-    try:
-        def _fetch_docs():
-            a = (
-                state.supabase.table("patent_documents")
-                .select("*").eq("id", req.patent_id_a).single().execute()
-            )
-            b = (
-                state.supabase.table("patent_documents")
-                .select("*").eq("id", req.patent_id_b).single().execute()
-            )
-            return a, b
-        a_resp, b_resp = await asyncio.to_thread(_fetch_docs)
-    except Exception as exc:
-        raise HTTPException(status_code=404, detail=f"Patent lookup failed: {exc}") from exc
-
-    def _get_chunks(patent_id: str):
-        rows = (
-            state.supabase.table("patent_chunks")
-            .select("section_type,content")
-            .eq("patent_id", patent_id)
-            .in_("section_type", ["claim_independent", "claim_dependent"])
-            .limit(20).execute().data or []
-        )
-        if rows:
-            return [r["content"] for r in rows]
-        return [r["content"] for r in
-                state.supabase.table("patent_chunks").select("content")
-                .eq("patent_id", patent_id).limit(20).execute().data or []]
-
-    try:
-        a_contents, b_contents = await asyncio.to_thread(
-            lambda: (_get_chunks(req.patent_id_a), _get_chunks(req.patent_id_b))
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Chunk fetch failed: {exc}") from exc
-
-    a_text = "\n\n".join(a_contents or [])
-    b_text = "\n\n".join(b_contents or [])
-
-    similarity_score = 0.0
-    if a_text.strip() and b_text.strip():
-        try:
-            ea = state.embed_model.encode([a_text[:2000]], task="text-matching", normalize_embeddings=True)[0]
-            eb = state.embed_model.encode([b_text[:2000]], task="text-matching", normalize_embeddings=True)[0]
-            similarity_score = float(np.dot(ea, eb))
-        except Exception as exc:
-            log.warning("Similarity embedding failed: %s", exc)
-
-    a_doc, b_doc = a_resp.data, b_resp.data
-
-    def _block(doc, text):
-        if text:
-            return (
-                f"{doc.get('patent_number','?')} — {doc.get('title','?')}\n"
-                f"Assignee: {doc.get('assignee','?')}\n\n{text[:2000]}"
-            )
-        return f"{doc.get('patent_number','?')} — {doc.get('title','?')} (no chunk text indexed)"
-
-    schema = (
-        '{"overlap_summary":"string",'
-        '"overlapping_claims":[{"claim_a":"string","claim_b":"string",'
-        '"overlap_type":"exact|semantic|functional","risk_level":"HIGH|MEDIUM|LOW"}],'
-        '"differentiating_features":["string"],'
-        '"overall_risk":"HIGH|MEDIUM|LOW|CLEAR",'
-        '"recommendation":"string"}'
-    )
-    prompt = (
-        "You are a senior patent IP analyst. Compare the two patents below.\n"
-        "Respond ONLY with minified JSON matching this schema — no markdown, no preamble:\n"
-        f"{schema}\n\n"
-        f"PATENT A:\n{_block(a_doc, a_text)}\n\n"
-        f"PATENT B:\n{_block(b_doc, b_text)}\n\n"
-        "Identify structural and semantic overlaps between the claims. "
-        "Assign a risk level to each overlap. List differentiating features. "
-        "Give overall_risk and a one-sentence recommendation."
-    )
-
-    try:
-        analysis = llm_json(prompt)
-        for key, default in [
-            ("overlap_summary", ""), ("overlapping_claims", []),
-            ("differentiating_features", []), ("overall_risk", "UNKNOWN"), ("recommendation", ""),
-        ]:
-            if key not in analysis:
-                analysis[key] = default
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Analysis error: {exc}") from exc
-
-    return {
-        "patent_a":         a_doc,
-        "patent_b":         b_doc,
-        "similarity_score": round(similarity_score * 100, 1),
-        "analysis":         analysis,
-    }
 
 
 # ---------------------------------------------------------------------------

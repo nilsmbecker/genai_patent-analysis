@@ -154,21 +154,36 @@ def determine_section_type(text: str) -> str:
 
 def split_into_chunks(full_text: str) -> List[Dict[str, str]]:
     """
-    Split document text into labelled chunks using LangChain's
-    RecursiveCharacterTextSplitter (500 chars, 50 overlap), then classify
-    each chunk with determine_section_type so the risk pipeline can distinguish
-    independent claims from dependent claims and description text.
+    Split document text into labelled chunks.
+
+    Order of operations:
+    1. Split on numbered claim boundaries first (CLAIM_BOUNDARY_RE) so each
+       block starts at a clean claim number — e.g. "7. The laminate comprising…"
+    2. Classify the whole block with determine_section_type while the opening
+       "N. " / "of claim N" markers are still intact.
+    3. Sub-split long blocks with RecursiveCharacterTextSplitter, preserving
+       the section_type label across all sub-chunks.
+
+    This fixes the previous bug where splitting before classifying caused
+    mid-claim fragments (which lack the opening "N. ") to fall through to
+    "description" and be placed under [BACKGROUND] in the LLM prompt.
     """
-    raw_chunks = _text_splitter.split_text(full_text)
+    blocks = CLAIM_BOUNDARY_RE.split(full_text)
     result: List[Dict[str, str]] = []
-    for text in raw_chunks:
-        text = text.strip()
-        if len(text) < 10:
+    for block in blocks:
+        block = block.strip()
+        if len(block) < 10:
             continue
-        result.append({
-            "section_type": determine_section_type(text),
-            "content":      text,
-        })
+        section_type = determine_section_type(block)
+        sub_chunks = _text_splitter.split_text(block)
+        for text in sub_chunks:
+            text = text.strip()
+            if len(text) < 10:
+                continue
+            result.append({
+                "section_type": section_type,
+                "content":      text,
+            })
     return result
 
 
