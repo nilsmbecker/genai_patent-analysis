@@ -1,5 +1,5 @@
 -- ============================================================
--- 004_innovation_analyses.sql
+-- 003_innovation_analyses.sql
 -- Stores saved Phase 4 innovation analyses.
 --
 -- Each row is a complete snapshot of one innovation pipeline run:

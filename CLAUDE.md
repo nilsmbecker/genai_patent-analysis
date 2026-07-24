@@ -2,7 +2,7 @@
 
 ## Project Context
 
-AI-powered patent analysis tool.
+**PatentOS** — AI-powered patent analysis tool for Fuyao Europe.
 Domain: laminated automotive glass (windshields, HUD zones, PVB interlayers).
 Stack: FastAPI + Supabase (pgvector) + OpenRouter (OpenAI-compatible API) + jinaai/jina-embeddings-v3 (1024-dim).
 
@@ -41,11 +41,10 @@ main.py             ← App factory + lifespan only
 scripts/
   ingest_patents.py ← CLI arg parsing only; calls app/services/ingest.py
 sql_queries/
-  schema.sql                  ← Base schema (patent_documents, patent_chunks, match_patent_hybrid)
-  migration_v2.sql            ← Fixes fts_tokens: GENERATED → trigger
-  003_patent_images.sql
-  004_innovation_analyses.sql
-  005_management_summaries.sql
+  001_schema.sql               ← Base schema (patent_documents, patent_chunks, match_patent_hybrid), 1024-dim vectors, fts_tokens trigger
+  002_patent_images.sql
+  003_innovation_analyses.sql
+  004_management_summaries.sql
 templates/          ← Jinja2 templates
   _pipeline_status.html
   base.html
@@ -61,6 +60,8 @@ static/
 uploads/            ← Temp uploads, gitignored
 requirements.txt
 CLAUDE.md
+README.md
+.env.example        ← Placeholder env vars; copy to .env and fill in real credentials
 ```
 
 ---
@@ -70,7 +71,7 @@ CLAUDE.md
 - **Embedding model**: `jinaai/jina-embeddings-v3` (1024 dims, `trust_remote_code=True` required). Do not change without re-embedding all chunks and migrating the Supabase column from `vector(1024)`.
 - **Hybrid search**: Reciprocal Rank Fusion (RRF) of pgvector cosine similarity + full-text search (`tsvector`). SQL function `match_patent_hybrid` lives in Supabase.
 - **pgvector format**: Embeddings must be sent as a string `"[0.123,0.456,...]"` — PostgREST cannot auto-cast Python lists.
-- **`fts_tokens` is a trigger column, not GENERATED** — `GENERATED` columns cause silent insert failures via PostgREST. See `sql_queries/migration_v2.sql`.
+- **`fts_tokens` is a trigger column, not GENERATED** — `GENERATED` columns cause silent insert failures via PostgREST. See the trigger in `sql_queries/001_schema.sql`.
 - **Risk scoring**: LLM identifies claim elements and classifies them into `matched_elements`, `missing_elements`, `unclear_elements`. `risk_score` (0–100) is computed deterministically in Python by `_compute_risk_score()` — never by the LLM. Score formula: `(matched / (matched + unclear)) × 100 + (unclear / (matched + unclear)) × 30`. Missing elements contribute zero — a missing element means the claim cannot be asserted.
 - **Claim labels in LLM prompt**: `[INDEPENDENT CLAIM]` / `[DEPENDENT CLAIM]` labels are kept in the context block so the LLM understands legal hierarchy. `[BACKGROUND]` sections are description chunks — LLM uses them for context only, never for scoring.
 - **Two-agent pattern**: Phase 2 uses a single risk assessment agent. Phases 3 use designer + auditor agents. Phase 4 uses analyst + innovator agents.
@@ -104,7 +105,7 @@ CLAUDE.md
 
 **Step 1 — `fetch_independent_claim_chunks`**: Embed user design → hybrid RRF search → weight results by section type (`claim_independent ×2.0`, `claim_dependent ×1.2`, `description ×0.8`). Weighting only affects candidate patent selection, not what the LLM sees.
 
-**Step 2 — `select_candidate_patents`**: Aggregate chunks by patent (sum of weighted scores, match count, max score). Select top `TOP_CANDIDATE_PATENTS = 2`.
+**Step 2 — `select_candidate_patents`**: Aggregate chunks by patent (sum of weighted scores, match count, max score). Select top `TOP_CANDIDATE_PATENTS = 3`.
 
 **Step 3 — `fetch_claim_family`**: Fetch all claim chunks (independent + dependent) + up to 3 description chunks for each candidate patent.
 
@@ -128,7 +129,7 @@ CLAUDE.md
 
 **Step 2 — `call_agent_designer`**: Builds a concise risk summary (top 2 patents, matched elements only) and prompts the designer LLM to propose 2 alternative designs. The designer is constrained to keep the same fundamental construction type (same material approach and lamination method) and only vary specific dimensions, materials, or methods.
 
-**Step 3 — Re-score + refinement loop**: Each proposal is embedded and run through `run_patent_risk_pipeline` against `DESIGNER_RESCORE_TOP_N = 3` candidate patents (wider than Phase 2's default of 2), gated by `DESIGNER_RESCORE_SCORE_FLOOR = 0.2`.
+**Step 3 — Re-score + refinement loop**: Each proposal is embedded and run through `run_patent_risk_pipeline` against `DESIGNER_RESCORE_TOP_N = 3` candidate patents (currently equal to Phase 2's own `TOP_CANDIDATE_PATENTS`), gated by `DESIGNER_RESCORE_SCORE_FLOOR = 0.2`.
 - If a proposal scores `LOW` or `CLEAR` (risk_score < 40) → it survives.
 - If it fails → `_revise_proposal()` is called with the **cumulative** avoid list (original risk elements + all new conflicts found so far across all rounds). Up to `MAX_REFINEMENT_ROUNDS = 2` revisions per proposal. After 2 failed revisions the proposal is discarded.
 
@@ -157,12 +158,13 @@ Only proposals that pass both the risk filter and the manufacturing audit are re
 
 ## Known Issues
 
-1. **No `.env.example`**: Missing — should be created for onboarding.
-2. **SQL files are not auto-applied**: `sql_queries/` files must be run manually in the Supabase SQL editor. They are reference files only.
+1. **SQL files are not auto-applied**: `sql_queries/` files must be run manually, in numeric order, in the Supabase SQL editor. They are reference files only.
 
 ---
 
 ## Environment Variables Required
+
+Copy `.env.example` to `.env` and fill in real credentials — never commit `.env`.
 
 ```
 SUPABASE_URL=

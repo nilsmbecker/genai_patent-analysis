@@ -1,7 +1,8 @@
-# README.md — Patent Analysis Platform
-# GenAI Patent Analysis Platform
+# PatentOS — Patent Analysis Platform
 
-AI-powered patent analysis tool. Upload patent PDFs, get summaries of patents, analyse IP (Intellectual Property) risk against your design ideas, get design-around suggestions, and discover innovation gaps across the patent corpus.
+AI-powered patent intelligence tool built for Fuyao Europe. Upload patent PDFs, get AI-generated summaries, analyse IP (Intellectual Property) risk against your design ideas, get design-around suggestions, and discover innovation gaps across the patent corpus.
+
+Live deployment: **https://patentos.up.railway.app**
 
 ---
 
@@ -32,12 +33,14 @@ The platform is structured in four phases, each building on the previous:
 
 ## Project structure
 
+```text
 ├── main.py                     # App entry point — FastAPI factory + lifespan
 ├── requirements.txt
-├── .env                        # Your credentials (never commit this)
+├── .env.example                # Template — copy to .env and fill in your own credentials
+├── .env                        # Your credentials (gitignored, never commit this)
 │
 ├── app/
-│   ├── config.py               # All env vars + constants (manufacturing constraints can be entered)
+│   ├── config.py               # All env vars + constants (manufacturing constraints live here)
 │   ├── state.py                # Singleton: Supabase client + embedding model
 │   ├── models.py               # All Pydantic request/response models
 │   │
@@ -63,15 +66,15 @@ The platform is structured in four phases, each building on the previous:
 ├── scripts/
 │   └── ingest_patents.py       # CLI for batch PDF ingestion
 │
-├── sql_queries/                # Run manually in Supabase SQL Editor (in order)
+├── sql_queries/                # Run manually in Supabase SQL Editor, in order
 │   ├── 001_schema.sql          # Base schema: patent_documents, patent_chunks, hybrid search function
-│   ├── 002_migration_v2.sql    # Only needed if you ran an older schema version
-│   ├── 003_patent_images.sql   # patent_images table
-│   ├── 004_innovation_analyses.sql
-│   └── 005_management_summaries.sql
+│   ├── 002_patent_images.sql   # patent_images table
+│   ├── 003_innovation_analyses.sql
+│   └── 004_management_summaries.sql
 │
 ├── templates/                  # Jinja2 HTML templates
 └── static/                     # Static assets (logo, etc.)
+```
 
 ---
 
@@ -96,7 +99,11 @@ pip install -r requirements.txt
 
 ### 3. Configure environment variables
 
-Create a `.env` file in the project root:
+Copy `.env.example` to `.env` and fill in your own credentials:
+
+```bash
+cp .env.example .env
+```
 
 ```env
 SUPABASE_URL=https://your-project.supabase.co
@@ -110,21 +117,23 @@ APP_PORT=8000                         # optional
 DEBUG=false                           # optional
 ```
 
+`.env` is gitignored and never committed — each person running the app (including tutors/graders) needs their own free [Supabase](https://supabase.com) project and [OpenRouter](https://openrouter.ai) API key. No shared credentials are distributed with this repository.
+
 ### 4. Set up the database
 
 Go to your Supabase project → **SQL Editor** and run the files in `sql_queries/` **in order**:
 
-1. `001_schema.sql` — creates the core tables and the hybrid search function
-2. `003_patent_images.sql`
-3. `004_innovation_analyses.sql`
-4. `005_management_summaries.sql`
+1. `001_schema.sql` — creates the core tables (1024-dim vector column, matching `jinaai/jina-embeddings-v3`) and the hybrid search function
+2. `002_patent_images.sql`
+3. `003_innovation_analyses.sql`
+4. `004_management_summaries.sql`
 
-> `002_migration_v2.sql` is only needed if you ran an older version of the schema. Skip it on a fresh setup.
-
-Also disable Row Level Security (RLS) on `patent_chunks` for the service role so the app can insert embeddings:
+Also disable Row Level Security (RLS) on `patent_chunks`, `patent_images`, and `management_summaries` so the app's anon-key client can insert embeddings and generated content:
 
 ```sql
 ALTER TABLE patent_chunks DISABLE ROW LEVEL SECURITY;
+ALTER TABLE patent_images DISABLE ROW LEVEL SECURITY;
+ALTER TABLE management_summaries DISABLE ROW LEVEL SECURITY;
 ```
 
 ### 5. Run the app
@@ -169,6 +178,21 @@ python scripts/ingest_patents.py --dir path/to/folder/ --skip-existing
 
 The CLI uses the same pipeline as the web endpoint. A failed PDF is logged and skipped — it does not abort the rest of the batch.
 
+### Skipping ingestion — loading pre-ingested seed data
+
+Re-running the full PDF pipeline (OCR, translation, embedding) just to get a working corpus is slow. This repo includes `sql_queries/seed_data.sql.gz` — a data-only export of the already-ingested corpus (generated with `python scripts/export_seed_data.py --gzip`) — so you can load real data directly instead:
+
+```bash
+# after running sql_queries/001_schema.sql (and 002-004 if you want those features)
+gunzip -k sql_queries/seed_data.sql.gz
+psql "<your-supabase-connection-string>" -f sql_queries/seed_data.sql
+# or paste the decompressed file's contents into the Supabase SQL Editor
+```
+
+This inserts `patent_documents` + `patent_chunks` with their original IDs and embeddings (`ON CONFLICT DO NOTHING`, safe to re-run). `patent_images` is excluded — figures aren't needed to exercise Phases 2-4, and they'd make the export considerably larger.
+
+To regenerate the seed file after ingesting more patents: `python scripts/export_seed_data.py --gzip`, then commit the `.gz` (the raw `.sql` is gitignored — embeddings compress ~3x, so only the compressed file belongs in git).
+
 ---
 ## How patent ingestion works
 
@@ -188,7 +212,7 @@ The CLI uses the same pipeline as the web endpoint. A failed PDF is logged and s
 
 1. Your proposed design text is embedded using the Jina model (`task="retrieval.query"`).
 2. A hybrid search runs against the database: **vector similarity** (pgvector cosine) + **full-text search** (tsvector), fused with Reciprocal Rank Fusion (RRF). Independent claim chunks are weighted higher than description chunks during candidate selection.
-3. The top 2 most relevant patents are selected.
+3. The top 3 most relevant patents are selected.
 4. For each patent, all claim chunks (independent + dependent) and up to 3 description chunks are fetched.
 5. The LLM receives the patent claims and your design, and classifies every claim element as:
    - `matched` — clearly present in your design
@@ -244,13 +268,19 @@ Total token context per LLM call: ~30 patents × 2 chunks × 400 chars ≈ 6 000
 | `DELETE` | `/api/v1/patents/{id}` | Delete patent + all chunks + images |
 | `GET` | `/api/v1/patents/{id}/summary` | LLM-generated patent summary |
 | `GET` | `/api/v1/patents/{id}/sheet/pdf` | Download per-patent Analysis Sheet PDF |
+| `GET` | `/api/v1/patents/{id}/images` | List figure images extracted for a patent |
+| `GET` | `/api/v1/images/{id}` | Fetch one figure image (PNG bytes) |
 | `POST` | `/api/v1/risk-analysis` | Phase 2: IP risk assessment (SSE stream) |
 | `POST` | `/api/v1/design-suggestions` | Phase 3: Design-around proposals (SSE stream) |
 | `POST` | `/api/v1/innovation` | Phase 4: Gap analysis + innovation vectors (SSE stream) |
 | `POST` | `/api/v1/innovation/save` | Save a completed innovation analysis |
 | `GET` | `/api/v1/innovation/saved` | List saved analyses |
+| `GET` | `/api/v1/innovation/saved/{id}` | Get one saved analysis with full result payload |
+| `DELETE` | `/api/v1/innovation/saved/{id}` | Delete a saved analysis |
 | `POST` | `/api/v1/management-summaries` | Generate + save a Management Summary PDF |
+| `GET` | `/api/v1/management-summaries` | List generated Management Summaries |
 | `GET` | `/api/v1/management-summaries/{id}/pdf` | Download a Management Summary PDF |
+| `DELETE` | `/api/v1/management-summaries/{id}` | Delete a Management Summary |
 
 The four pipeline endpoints (`/ingest`, `/risk-analysis`, `/design-suggestions`, `/innovation`) respond with `text/event-stream`. They emit `step` events during processing and a final `result` or `error` event.
 

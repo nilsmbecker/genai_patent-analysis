@@ -1,5 +1,5 @@
 -- ============================================================
--- 005_management_summaries.sql
+-- 004_management_summaries.sql
 -- Stores generated one-page Management Summary PDFs (Risk + Design
 -- Improvements + Innovation condensed into a single report for
 -- management review).

@@ -1,6 +1,7 @@
 -- ============================================================
--- Patent Analysis Platform — Supabase Schema  (v2)
+-- Patent Analysis Platform — Supabase Schema
 -- Compatible with Supabase SQL Editor (PostgreSQL 15+)
+-- Run this first, then the numbered files in sql_queries/ in order.
 -- ============================================================
 
 -- 1. Enable pgvector extension
@@ -33,7 +34,7 @@ CREATE TABLE IF NOT EXISTS patent_chunks (
     section_type TEXT        NOT NULL,
     content      TEXT        NOT NULL,
     fts_tokens   TSVECTOR,                    -- populated by trigger below
-    embedding    VECTOR(384) NOT NULL,
+    embedding    VECTOR(1024) NOT NULL,       -- jinaai/jina-embeddings-v3
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -71,7 +72,7 @@ CREATE INDEX IF NOT EXISTS idx_patent_documents_jurisdiction
 -- 6. Hybrid RRF search function
 -- ============================================================
 CREATE OR REPLACE FUNCTION match_patent_hybrid(
-    query_embedding   VECTOR(384),
+    query_embedding   VECTOR(1024),
     query_text        TEXT,
     filter_jurisdiction TEXT    DEFAULT NULL,
     match_count       INT      DEFAULT 3,

@@ -13,7 +13,8 @@ Startup sequence (lifespan):
   (Embedding model is lazy-loaded on first use — see app/state.py)
 
 Routers registered:
-  app/routes/ui.py  — HTML page routes (/, /upload, /patent-library, /compare, /playground)
+  app/routes/ui.py  — HTML page routes (/, /upload, /patent-library, /risk,
+                       /design-suggestions, /innovation, /summaries, /downloads)
   app/routes/api.py — JSON API routes (/health, /api/v1/*)
 
 Run:
@@ -83,7 +84,7 @@ async def lifespan(app: FastAPI):
     log.info("Shutdown complete.")
 
 
-app = FastAPI(title="Patent Analysis Platform", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="PatentOS", description="Patent Analysis Platform for Fuyao Europe", version="1.0.0", lifespan=lifespan)
 
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 app.mount("/static", StaticFiles(directory="static"), name="static")

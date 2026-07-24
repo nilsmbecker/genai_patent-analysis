@@ -2,7 +2,7 @@
 app/models.py — Pydantic request/response models for all API endpoints.
 
 Phase 2 — Risk Analysis:
-  PatentRiskResult - perpatent structured risk assesment
+  PatentRiskResult - per-patent structured risk assessment
   RiskAnalysisRequest   — input for POST /api/v1/risk-analysis
   RiskAnalysisResponse  — output: risk_status + infringement_map + matched chunks
 

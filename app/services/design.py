@@ -69,9 +69,9 @@ def call_agent_designer(
             rule call_agent_auditor enforces) so it doesn't waste a round proposing
             something the audit step will reject anyway.
     Step 2: Re-score each proposal using run_patent_risk_pipeline against
-            DESIGNER_RESCORE_TOP_N candidate patents (wider safety net than Phase 2's
-            default of 2), gated by DESIGNER_RESCORE_SCORE_FLOOR so the wider check
-            doesn't cost extra LLM calls for clearly-irrelevant candidates.
+            DESIGNER_RESCORE_TOP_N candidate patents (currently equal to Phase 2's
+            own TOP_CANDIDATE_PATENTS), gated by DESIGNER_RESCORE_SCORE_FLOOR so the
+            check doesn't cost extra LLM calls for clearly-irrelevant candidates.
     Step 3: If a proposal fails (HIGH/MEDIUM), don't discard it immediately — ask
             the designer to revise it (_revise_proposal) against the cumulative set
             of claim elements to avoid so far, and re-score again. Up to

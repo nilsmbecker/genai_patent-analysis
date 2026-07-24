@@ -1,6 +1,6 @@
 -- ============================================================
--- Migration 003: Patent figure images table
--- Run in Supabase SQL Editor AFTER schema.sql has been applied.
+-- 002_patent_images.sql — Patent figure images table
+-- Run in Supabase SQL Editor AFTER 001_schema.sql has been applied.
 -- After running, disable RLS on patent_images for the service
 -- role (same as patent_chunks) so the Python client can insert.
 -- ============================================================
