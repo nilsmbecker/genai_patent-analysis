@@ -6,6 +6,16 @@ Live deployment: **https://patentos.up.railway.app**
 
 ---
 
+## Getting patent data — pick one
+
+Ingesting PDFs from scratch (OCR + translation + embedding) is slow. Three ways to get a working corpus, in order of effort:
+
+1. **Use the hosted instance** — [patentos.up.railway.app](https://patentos.up.railway.app) is pre-populated with the full ingested corpus. No setup at all.
+2. **Run locally with the existing corpus** — apply `sql_queries/001`-`004`, then load `sql_queries/seed_data.sql.gz` instead of re-ingesting PDFs. See [Skipping ingestion](#skipping-ingestion--loading-pre-ingested-seed-data) below.
+3. **Ingest your own patents** — copy `.env.example` to `.env` with your own Supabase/OpenRouter keys, then upload PDFs via the web UI or `scripts/ingest_patents.py`. See [Ingesting patents](#ingesting-patents) below.
+
+---
+
 ## What it does
 
 The platform is structured in four phases, each building on the previous:
