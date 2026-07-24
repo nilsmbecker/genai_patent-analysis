@@ -23,3 +23,13 @@ dist/
 
 # VS code
 .vscode/
+# Supabase CLI cache
+supabase/.temp/
+
+# Claude session config
+.claude/
+
+# LaTeX build artifacts
+docs/*.aux
+docs/*.log
+docs/*.out

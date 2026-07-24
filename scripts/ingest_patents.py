@@ -87,6 +87,10 @@ def _parse_args() -> argparse.Namespace:
 
     p.add_argument("--skip-existing", action="store_true",
                    help="(--dir mode) Skip PDFs whose patent number already exists in Supabase.")
+    p.add_argument("--batch-size", type=int, default=0,
+                   help="(--dir mode) Stop after processing this many PDFs. "
+                        "Re-run with --skip-existing to continue. "
+                        "Recommended: 10-15 to avoid Tesseract resource exhaustion.")
     return p.parse_args()
 
 
@@ -177,7 +181,9 @@ def main() -> None:
         existing = _fetch_existing_patent_numbers(supabase)
         log.info("%d existing patent number(s) fetched from Supabase.", len(existing))
 
+    batch_size = args.batch_size if args.batch_size > 0 else len(pdfs)
     failed = 0
+    processed = 0
     for pdf_path in pdfs:
         if args.skip_existing:
             predicted = _predict_patent_number_from_filename(pdf_path.name)
@@ -192,18 +198,40 @@ def main() -> None:
                 supabase=supabase,
                 embed_model=embed_model,
             )
+            chunks = result.get("chunks_inserted", 0)
+            if chunks == 0:
+                # OCR crash or empty extraction — delete the orphan patent_documents
+                # record so the patent can be re-ingested in a fresh session.
+                try:
+                    pid = result.get("patent_id")
+                    if pid:
+                        supabase.table("patent_documents").delete().eq("id", pid).execute()
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    f"0 chunks extracted — likely OCR crash. "
+                    f"Re-run this patent in a fresh session."
+                )
             log.info(
                 "OK    %s  patent=%s  chunks=%d  images=%d",
                 pdf_path.name,
                 result.get("patent_number", "?"),
-                result.get("chunks_inserted", 0),
+                chunks,
                 result.get("images_inserted", 0),
             )
         except Exception:
             log.exception("FAIL  %s", pdf_path.name)
             failed += 1
+        else:
+            processed += 1
+            if processed >= batch_size:
+                log.info(
+                    "Batch limit of %d reached. Re-run with --skip-existing to continue.",
+                    batch_size,
+                )
+                break
 
-    log.info("Batch done — %d/%d failed.", failed, len(pdfs))
+    log.info("Batch done — %d/%d failed.", failed, processed + failed)
 
 
 if __name__ == "__main__":
