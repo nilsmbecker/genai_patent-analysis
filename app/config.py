@@ -1,0 +1,88 @@
+"""
+app/config.py — Central configuration for the Patent Analysis Platform.
+
+All constants and environment variables live here. Import `settings` for env vars
+and the uppercase constants (EMBEDDING_MODEL, PVB_MIN_MM, etc.) for domain values.
+New env vars must be added to the Settings class — never use os.environ.get() elsewhere.
+
+Settings (loaded from .env via pydantic-settings):
+  SUPABASE_URL / SUPABASE_ANON_KEY  — Supabase project credentials
+  OPENROUTER_API_KEY                — OpenRouter API key (openai-compatible)
+  OPENROUTER_MODEL                  — Model to use; "openrouter/auto" lets OpenRouter pick
+  APP_HOST / APP_PORT               — Uvicorn bind address (default 127.0.0.1:8000)
+  DEBUG                             — Enable debug endpoints (default False)
+
+Key constants:
+  EMBEDDING_MODEL    — jinaai/jina-embeddings-v3 (1024-dim); do not change without re-embedding
+  EMBED_DIMS         — vector dimension matching the current embedding model (must match schema)
+  PVB_MIN/MAX_MM     — PVB interlayer thickness hard limits (Fuyao manufacturing constraint)
+  GLASS_TOTAL_MIN/MAX— Total glass stack thickness limits in mm
+  BATCH_SIZE         — Supabase insert batch size and embedding encode batch size
+  UPLOAD_DIR         — Temp directory for PDF uploads (auto-created)
+"""
+from pathlib import Path
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from dotenv import load_dotenv
+
+_ROOT = Path(__file__).parent.parent
+
+load_dotenv(_ROOT / ".env")
+load_dotenv(_ROOT / ".env.txt", override=False)
+
+BASE_DIR = _ROOT
+UPLOAD_DIR = _ROOT / "uploads"
+UPLOAD_DIR.mkdir(exist_ok=True)
+
+
+class Settings(BaseSettings):
+    supabase_url: str = ""
+    supabase_anon_key: str = ""
+    openrouter_api_key: str = ""
+    openrouter_model: str = "openrouter/auto"
+    app_host: str = "127.0.0.1"
+    app_port: int = 8000
+    debug: bool = False
+
+    model_config = SettingsConfigDict(env_file=str(_ROOT / ".env"), extra="ignore")
+
+
+settings = Settings()
+
+# Embedding — jinaai/jina-embeddings-v3 uses task-specific LoRA adapters;
+# pass task="retrieval.passage" when encoding documents and task="retrieval.query"
+# when encoding search queries. Requires trust_remote_code=True at load time.
+EMBEDDING_MODEL = "jinaai/jina-embeddings-v3"
+EMBED_DIMS      = 1024
+LLM_MAX_TOKENS = 2048
+
+# PDF processing
+BATCH_SIZE = 32
+PAGE_DPI = 150
+MIN_NATIVE_CHARS = 50
+TRANSLATE_CHUNK_LIMIT = 4500
+META_EXTRACT_PAGES = 3
+
+# Figure extraction — pages whose text is below FIGURE_TEXT_THRESHOLD (in UTF-8 bytes,
+# not code points) are treated as drawing pages and rendered as PNG. Using byte length
+# makes the threshold script-agnostic: a Chinese character is 3 bytes, so 67 CJK
+# characters already exceed 200 bytes and will not be mistaken for figure pages.
+FIGURE_DPI = 60
+FIGURE_TEXT_THRESHOLD = 200
+
+# Glass domain hard limits (Manufacturing constraints)
+PVB_MIN_MM = 0.38
+PVB_MAX_MM = 0.76
+GLASS_TOTAL_MIN = 3.1
+GLASS_TOTAL_MAX = 6.0
+HUD_ZONE_CONDUCTIVE_BAN = True
+
+
+# Phase 4 — minimum cosine similarity (match_patent_hybrid's vector_rank column) for a
+# corpus chunk to count as a genuine match to a user-supplied domain. match_patent_hybrid's
+# vector side is a pure nearest-neighbour search with no floor of its own, so an unrelated
+# domain (e.g. "Cookies" against an automotive-glass corpus) still returns *some* chunks —
+# just not meaningfully similar ones. fetch_corpus_overview rejects the request instead of
+# running the LLM pipeline on them if nothing clears this floor (and no chunk has an actual
+# full-text hit either). Chosen conservatively for jina-embeddings-v3; re-tune against real
+# corpus data if genuine domains start getting rejected or nonsense ones start passing.
+INNOVATION_MIN_VECTOR_SIMILARITY = 0.35
