@@ -27,3 +27,6 @@ supabase/.temp/
 
 # Claude session config
 .claude/
+
+# Generated seed data (uncompressed)
+sql_queries/seed_data.sql
